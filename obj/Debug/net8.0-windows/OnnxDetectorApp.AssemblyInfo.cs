@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("OnnxDetectorApp")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f0a7b552ab3d99c8efbb974c025f634c3c7e50b4")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+cf65eb1da1f96f7950b02466a1ca05a44ab7007b")]
 [assembly: System.Reflection.AssemblyProductAttribute("OnnxDetectorApp")]
 [assembly: System.Reflection.AssemblyTitleAttribute("OnnxDetectorApp")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

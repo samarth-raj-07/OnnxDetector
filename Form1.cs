@@ -14,7 +14,8 @@ namespace OnnxDetectorApp
     {
         // ── State ──────────────────────────────────────────────────────────
         private string _modelPath = "";
-        private string _imagePath = "";
+        private string _leftImagePath = "";
+        private string _rightImagePath = "";
         private string _saveFolder = "";
         private string _position = "Left";
         private float _scoreThreshold = 0.5f;
@@ -27,42 +28,36 @@ namespace OnnxDetectorApp
         }
 
         // ──────────────────────────────────────────────────────────────────
-        // Wire up all event handlers after Designer init
+        // Wire Events
         // ──────────────────────────────────────────────────────────────────
         private void WireEvents()
         {
-            // Header buttons
             btnClose.Click += (s, e) => Application.Exit();
             btnClearView.Click += BtnClearView_Click;
-
-            // Settings buttons
             btnModel.Click += BtnModel_Click;
             btnPosition.Click += BtnPosition_Click;
             btnTestImage.Click += BtnTestImage_Click;
             btnSaveFolder.Click += BtnSaveFolder_Click;
+
             txtPosition.TextChanged += (s, e) => _position = txtPosition.Text.Trim();
 
-            // Threshold slider
             trkThreshold.ValueChanged += (s, e) =>
             {
                 _scoreThreshold = trkThreshold.Value / 100f;
                 lblThresholdValue.Text = _scoreThreshold.ToString("F2");
             };
 
-            // Run buttons
+            // Run Detection = active position only
             btnRun.Click += BtnRun_Click;
-            btnAiExec.Click += BtnRun_Click;
+            // AI Exec = both Left then Right, sequentially
+            btnAiExec.Click += BtnAiExec_Click;
 
-            // Align mark preview paint
             picAlignPreview.Paint += PicAlignPreview_Paint;
-
-            // Image panel watermarks
             picLeftFull.Paint += (s, e) => DrawWatermark(picLeftFull, e.Graphics);
             picRightFull.Paint += (s, e) => DrawWatermark(picRightFull, e.Graphics);
             picLeftCrop.Paint += (s, e) => DrawWatermark(picLeftCrop, e.Graphics);
             picRightCrop.Paint += (s, e) => DrawWatermark(picRightCrop, e.Graphics);
 
-            // Settings panel border
             pnlSettingsBorder.Paint += (s, e) =>
             {
                 using var pen = new Pen(Color.FromArgb(200, 200, 200), 1);
@@ -70,7 +65,6 @@ namespace OnnxDetectorApp
                     pnlSettingsBorder.Width - 1, pnlSettingsBorder.Height - 1);
             };
 
-            // Clock timer
             timerClock.Tick += (s, e) =>
                 lblTimestamp.Text = DateTime.Now.ToString("dddd, MMMM d, yyyy  HH:mm:ss");
             timerClock.Start();
@@ -78,7 +72,7 @@ namespace OnnxDetectorApp
         }
 
         // ──────────────────────────────────────────────────────────────────
-        // Paint handlers
+        // Paint
         // ──────────────────────────────────────────────────────────────────
         private void PicAlignPreview_Paint(object sender, PaintEventArgs e)
         {
@@ -93,8 +87,8 @@ namespace OnnxDetectorApp
         private void DrawWatermark(PictureBox pic, Graphics g)
         {
             if (pic.Image != null) return;
-            using var fnt = new Font("Segoe UI", 22f, FontStyle.Bold);
-            using var brush = new SolidBrush(Color.FromArgb(45, 0, 0, 0));
+            using var fnt = new Font("Segoe UI", 18f, FontStyle.Bold);
+            using var brush = new SolidBrush(Color.FromArgb(50, 0, 0, 0));
             var sz = g.MeasureString("No Image", fnt);
             g.DrawString("No Image", fnt, brush,
                 (pic.Width - sz.Width) / 2f,
@@ -102,7 +96,7 @@ namespace OnnxDetectorApp
         }
 
         // ──────────────────────────────────────────────────────────────────
-        // Button Handlers
+        // Settings
         // ──────────────────────────────────────────────────────────────────
         private void BtnModel_Click(object sender, EventArgs e)
         {
@@ -123,6 +117,9 @@ namespace OnnxDetectorApp
         {
             _position = _position == "Left" ? "Right" : "Left";
             txtPosition.Text = _position;
+            // Show the stored filename for the active side
+            txtTestImage.Text = Path.GetFileName(
+                _position == "Left" ? _leftImagePath : _rightImagePath);
         }
 
         private void BtnTestImage_Click(object sender, EventArgs e)
@@ -132,20 +129,23 @@ namespace OnnxDetectorApp
                 Title = "Select Test Image",
                 Filter = "Images (*.jpg;*.png;*.bmp)|*.jpg;*.png;*.bmp|All Files (*.*)|*.*"
             };
-            if (dlg.ShowDialog() == DialogResult.OK)
-            {
-                _imagePath = dlg.FileName;
-                txtTestImage.Text = Path.GetFileName(_imagePath);
-                LoadImageToPanel();
-            }
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+
+            string path = dlg.FileName;
+
+            // Store to the correct side
+            if (_position == "Left") _leftImagePath = path;
+            else _rightImagePath = path;
+
+            txtTestImage.Text = Path.GetFileName(path);
+            LoadRawImageToPanel(_position, path);
+            SetStatus($"{_position} image loaded: {Path.GetFileName(path)}", Color.LightGreen);
         }
 
         private void BtnSaveFolder_Click(object sender, EventArgs e)
         {
             using var dlg = new FolderBrowserDialog
-            {
-                Description = "Select Save / Log Folder"
-            };
+            { Description = "Select Save / Log Folder" };
             if (dlg.ShowDialog() == DialogResult.OK)
             {
                 _saveFolder = dlg.SelectedPath;
@@ -155,91 +155,65 @@ namespace OnnxDetectorApp
 
         private void BtnClearView_Click(object sender, EventArgs e)
         {
-            picLeftFull.Image = null;  picLeftFull.Invalidate();
-            picRightFull.Image = null; picRightFull.Invalidate();
-            picLeftCrop.Image = null;  picLeftCrop.Invalidate();
-            picRightCrop.Image = null; picRightCrop.Invalidate();
-            lblLeftXY.Text  = "Left X Position\r\nLeft Y Position";
+            ClearPictureBox(picLeftFull);
+            ClearPictureBox(picRightFull);
+            ClearPictureBox(picLeftCrop);
+            ClearPictureBox(picRightCrop);
+
+            _leftImagePath = "";
+            _rightImagePath = "";
+            txtTestImage.Text = "";
+
+            lblLeftXY.Text = "Left X Position\r\nLeft Y Position";
             lblRightXY.Text = "Right X Position\r\nRight Y Position";
             dgvEvents.Rows.Clear();
             SetStatus("View cleared.", Color.Silver);
         }
 
+        // ──────────────────────────────────────────────────────────────────
+        // Run Detection — active position only
+        // ──────────────────────────────────────────────────────────────────
         private async void BtnRun_Click(object sender, EventArgs e)
         {
-            if (string.IsNullOrEmpty(_modelPath)) { Warn("Please select an ONNX model first."); return; }
-            if (string.IsNullOrEmpty(_imagePath)) { Warn("Please select a test image first."); return; }
+            if (string.IsNullOrEmpty(_modelPath))
+            { Warn("Please select an ONNX model first."); return; }
 
-            SetStatus("Running inference…", Color.Yellow);
-            btnRun.Enabled = false;
-            btnAiExec.Enabled = false;
+            string imgPath = _position == "Left" ? _leftImagePath : _rightImagePath;
+            if (string.IsNullOrEmpty(imgPath))
+            { Warn($"Please load a {_position} image first."); return; }
+
+            float a = TryParseAB(_position == "Left" ? txtLeftA.Text : txtRightA.Text);
+            float b = TryParseAB(_position == "Left" ? txtLeftB.Text : txtRightB.Text);
+
+            SetStatus($"Running [{_position}]  a={a:F2}  b={b:F2}…", Color.Yellow);
+            SetButtonsEnabled(false);
 
             try
             {
                 var sw = System.Diagnostics.Stopwatch.StartNew();
 
-                var (results, annotated, crop) = await System.Threading.Tasks.Task.Run(() =>
-                    RunInference(_imagePath, _modelPath, _scoreThreshold));
+                DetectionResult[] results = null;
+                Bitmap annotated = null, crop = null;
+
+                await System.Threading.Tasks.Task.Run(() =>
+                {
+                    (var r, var ann, var cr) = RunInference(imgPath, _modelPath, _scoreThreshold, a, b);
+                    results = r.ToArray();
+                    annotated = ann;
+                    crop = cr;
+                });
 
                 sw.Stop();
                 string runTime = $"{sw.ElapsedMilliseconds} ms";
 
-                var targetPic  = _position == "Left" ? picLeftFull  : picRightFull;
-                var targetCrop = _position == "Left" ? picLeftCrop   : picRightCrop;
-                var targetXY   = _position == "Left" ? lblLeftXY     : lblRightXY;
+                ApplyResultsToUI(_position, results.ToList(), annotated, crop,
+                    a, b, imgPath, runTime);
 
-                targetPic.Image?.Dispose();
-                targetPic.Image = annotated;
-                targetCrop.Image?.Dispose();
-                targetCrop.Image = crop;
-
-                if (results.Count > 0)
-                {
-                    // Read a/b from UI — which side's values to use
-                    float a = TryParseAB(_position == "Left" ? txtLeftA.Text : txtRightA.Text);
-                    float b = TryParseAB(_position == "Left" ? txtLeftB.Text : txtRightB.Text);
-
-                    var r = results[0];
-                    float xc = r.ComputeXc(a);
-                    float yc = r.ComputeYc(b);
-                    targetXY.Text = $"{_position} X: {xc:F1}\r\n{_position} Y: {yc:F1}";
-
-                    foreach (var det in results)
-                    {
-                        float detXc = det.ComputeXc(a);
-                        float detYc = det.ComputeYc(b);
-
-                        string savePath = "";
-                        if (!string.IsNullOrEmpty(_saveFolder))
-                        {
-                            savePath = Path.Combine(_saveFolder,
-                                $"det_{_position}_{DateTime.Now:yyyyMMdd_HHmmss}.jpg");
-                            annotated.Save(savePath,
-                                System.Drawing.Imaging.ImageFormat.Jpeg);
-                        }
-
-                        dgvEvents.Rows.Add(
-                            Path.GetFileName(_imagePath),
-                            DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
-                            runTime,
-                            _position,
-                            $"{det.Xmin:F0}", $"{det.Ymin:F0}",
-                            $"{det.Xmax:F0}", $"{det.Ymax:F0}",
-                            $"{detXc:F1}",   $"{detYc:F1}",
-                            $"{det.Score:F3}",
-                            savePath
-                        );
-                    }
-
-                    SetStatus(
-                        $"Detected {results.Count} mark(s)  |  Score: {results[0].Score:F3}  |  Time: {runTime}",
-                        Color.LightGreen);
-                }
-                else
-                {
-                    targetXY.Text = $"{_position} X: —\r\n{_position} Y: —";
-                    SetStatus("No marks detected above threshold.", Color.Orange);
-                }
+                SetStatus(results.Length > 0
+                    ? $"[{_position}] {results.Length} mark(s)  Xc={results[0].ComputeXc(a):F1}  " +
+                      $"Yc={results[0].ComputeYc(b):F1}  Score={results[0].Score:F3}  {runTime}"
+                    : $"[{_position}] No marks detected above threshold.",
+                    results.Length > 0 ? Color.LightGreen : Color.Orange);
             }
             catch (Exception ex)
             {
@@ -247,26 +221,178 @@ namespace OnnxDetectorApp
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
                 SetStatus("Error during inference.", Color.OrangeRed);
             }
-            finally
+            finally { SetButtonsEnabled(true); }
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        // AI Exec — Left THEN Right, sequentially (avoids ONNX race conditions)
+        // ──────────────────────────────────────────────────────────────────
+        private async void BtnAiExec_Click(object sender, EventArgs e)
+        {
+            if (string.IsNullOrEmpty(_modelPath))
+            { Warn("Please select an ONNX model first."); return; }
+
+            bool hasLeft = !string.IsNullOrEmpty(_leftImagePath);
+            bool hasRight = !string.IsNullOrEmpty(_rightImagePath);
+
+            if (!hasLeft && !hasRight)
+            { Warn("Please load at least one image (Left or Right) first."); return; }
+
+            float aL = TryParseAB(txtLeftA.Text);
+            float bL = TryParseAB(txtLeftB.Text);
+            float aR = TryParseAB(txtRightA.Text);
+            float bR = TryParseAB(txtRightB.Text);
+
+            SetStatus("AI Exec — processing both sides…", Color.Yellow);
+            SetButtonsEnabled(false);
+
+            int totalDetections = 0;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
+            try
             {
-                btnRun.Enabled    = true;
-                btnAiExec.Enabled = true;
+                // ── Step 1: Left ─────────────────────────────────────────
+                if (hasLeft)
+                {
+                    SetStatus($"AI Exec — running Left  (a={aL:F2}, b={bL:F2})…", Color.Yellow);
+
+                    DetectionResult[] rL = null;
+                    Bitmap annL = null, cropL = null;
+
+                    await System.Threading.Tasks.Task.Run(() =>
+                    {
+                        (var r, var a2, var c) = RunInference(
+                            _leftImagePath, _modelPath, _scoreThreshold, aL, bL);
+                        rL = r.ToArray();
+                        annL = a2;
+                        cropL = c;
+                    });
+
+                    // Apply Left results — UI thread
+                    ApplyResultsToUI("Left", rL.ToList(), annL, cropL,
+                        aL, bL, _leftImagePath, $"{sw.ElapsedMilliseconds} ms");
+                    totalDetections += rL.Length;
+                }
+
+                // ── Step 2: Right ────────────────────────────────────────
+                if (hasRight)
+                {
+                    SetStatus($"AI Exec — running Right  (a={aR:F2}, b={bR:F2})…", Color.Yellow);
+
+                    DetectionResult[] rR = null;
+                    Bitmap annR = null, cropR = null;
+
+                    await System.Threading.Tasks.Task.Run(() =>
+                    {
+                        (var r, var a2, var c) = RunInference(
+                            _rightImagePath, _modelPath, _scoreThreshold, aR, bR);
+                        rR = r.ToArray();
+                        annR = a2;
+                        cropR = c;
+                    });
+
+                    // Apply Right results — UI thread
+                    ApplyResultsToUI("Right", rR.ToList(), annR, cropR,
+                        aR, bR, _rightImagePath, $"{sw.ElapsedMilliseconds} ms");
+                    totalDetections += rR.Length;
+                }
+
+                sw.Stop();
+                SetStatus(
+                    $"AI Exec complete — {totalDetections} total detection(s) | {sw.ElapsedMilliseconds} ms",
+                    Color.LightGreen);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"AI Exec error:\n{ex.Message}", "Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                SetStatus("AI Exec error.", Color.OrangeRed);
+            }
+            finally { SetButtonsEnabled(true); }
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        // Apply results to the correct panels
+        // Clear image first, then assign — prevents ghost/superimposition
+        // ──────────────────────────────────────────────────────────────────
+        private void ApplyResultsToUI(string position,
+            List<DetectionResult> results,
+            Bitmap annotated, Bitmap crop,
+            float a, float b,
+            string imagePath, string runTime)
+        {
+            bool isLeft = position == "Left";
+            var targetFull = isLeft ? picLeftFull : picRightFull;
+            var targetCrop = isLeft ? picLeftCrop : picRightCrop;
+            var targetXY = isLeft ? lblLeftXY : lblRightXY;
+
+            // Clear old images completely before setting new ones
+            ClearPictureBox(targetFull);
+            ClearPictureBox(targetCrop);
+
+            // Now assign the new bitmaps
+            targetFull.Image = annotated;
+            targetCrop.Image = crop;
+
+            if (results.Count > 0)
+            {
+                float xc = results[0].ComputeXc(a);
+                float yc = results[0].ComputeYc(b);
+                targetXY.Text = $"{position} X: {xc:F1}\r\n{position} Y: {yc:F1}";
+
+                foreach (var det in results)
+                {
+                    string savePath = "";
+                    if (!string.IsNullOrEmpty(_saveFolder))
+                    {
+                        savePath = Path.Combine(_saveFolder,
+                            $"det_{position}_{DateTime.Now:yyyyMMdd_HHmmss_fff}.jpg");
+                        annotated.Save(savePath, System.Drawing.Imaging.ImageFormat.Jpeg);
+                    }
+
+                    dgvEvents.Rows.Add(
+                        Path.GetFileName(imagePath),
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                        runTime, position,
+                        $"{det.Xmin:F0}", $"{det.Ymin:F0}",
+                        $"{det.Xmax:F0}", $"{det.Ymax:F0}",
+                        $"{det.ComputeXc(a):F1}", $"{det.ComputeYc(b):F1}",
+                        $"{det.Score:F3}", savePath);
+                }
+            }
+            else
+            {
+                targetXY.Text = $"{position} X: —\r\n{position} Y: —";
             }
         }
 
         // ──────────────────────────────────────────────────────────────────
-        // ONNX Inference  (YOLOv5 standard export)
+        // Clear a PictureBox safely — null first, force repaint, then dispose
+        // ──────────────────────────────────────────────────────────────────
+        private static void ClearPictureBox(PictureBox pic)
+        {
+            var old = pic.Image;
+            pic.Image = null;
+            pic.Invalidate();
+            pic.Update();          // force immediate repaint with no image
+            old?.Dispose();
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        // ONNX Inference
         // ──────────────────────────────────────────────────────────────────
         private (List<DetectionResult> results, Bitmap annotated, Bitmap crop)
-            RunInference(string imagePath, string modelPath, float threshold)
+            RunInference(string imagePath, string modelPath,
+                         float threshold, float a, float b)
         {
-            const int inputW = 640;
-            const int inputH = 640;
+            const int inputW = 640, inputH = 640;
 
-            using var origBmp = new Bitmap(imagePath);
-            int origW = origBmp.Width, origH = origBmp.Height;
+            // Load original — keep alive until annotated is fully drawn
+            var origBmp = new Bitmap(imagePath);
+            int origW = origBmp.Width;
+            int origH = origBmp.Height;
 
-            // Resize to model input size
+            // Resize to model input
             using var resized = new Bitmap(inputW, inputH);
             using (var g = Graphics.FromImage(resized))
             {
@@ -274,7 +400,7 @@ namespace OnnxDetectorApp
                 g.DrawImage(origBmp, 0, 0, inputW, inputH);
             }
 
-            // Build float tensor [1, 3, H, W]  RGB 0-1
+            // Build float tensor [1, 3, H, W]
             var tensor = new DenseTensor<float>(new[] { 1, 3, inputH, inputW });
             for (int y = 0; y < inputH; y++)
                 for (int x = 0; x < inputW; x++)
@@ -285,96 +411,101 @@ namespace OnnxDetectorApp
                     tensor[0, 2, y, x] = px.B / 255f;
                 }
 
-            var inputs = new List<NamedOnnxValue>
+            // Run ONNX
+            using var session = new InferenceSession(modelPath);
+            using var outputs = session.Run(new List<NamedOnnxValue>
             {
                 NamedOnnxValue.CreateFromTensor("images", tensor)
-            };
+            });
 
-            using var session = new InferenceSession(modelPath);
-            using var outputs = session.Run(inputs);
-
-            // YOLOv5 output: [1, num_boxes, 85]
-            var output   = outputs.First().AsTensor<float>();
+            var output = outputs.First().AsTensor<float>();
             int numBoxes = output.Dimensions[1];
-            int stride   = output.Dimensions[2];
-
+            int stride = output.Dimensions[2];
             var results = new List<DetectionResult>();
 
             for (int i = 0; i < numBoxes; i++)
             {
-                float objConf = output[0, i, 4];
-                if (objConf < threshold) continue;
+                float conf = output[0, i, 4];
+                if (conf < threshold) continue;
 
-                float maxClassScore = 0f;
+                float maxCls = 0f;
                 for (int c = 5; c < stride; c++)
-                    if (output[0, i, c] > maxClassScore)
-                        maxClassScore = output[0, i, c];
+                    if (output[0, i, c] > maxCls) maxCls = output[0, i, c];
 
-                float score = objConf * maxClassScore;
+                float score = conf * maxCls;
                 if (score < threshold) continue;
 
-                float cx = output[0, i, 0];
-                float cy = output[0, i, 1];
-                float bw = output[0, i, 2];
-                float bh = output[0, i, 3];
-
-                // Scale back to original resolution
-                float xmin = (cx - bw / 2f) / inputW * origW;
-                float ymin = (cy - bh / 2f) / inputH * origH;
-                float xmax = (cx + bw / 2f) / inputW * origW;
-                float ymax = (cy + bh / 2f) / inputH * origH;
+                float cx = output[0, i, 0], cy = output[0, i, 1];
+                float bw = output[0, i, 2], bh = output[0, i, 3];
 
                 results.Add(new DetectionResult
                 {
-                    Xmin = xmin, Ymin = ymin,
-                    Xmax = xmax, Ymax = ymax,
+                    Xmin = (cx - bw / 2f) / inputW * origW,
+                    Ymin = (cy - bh / 2f) / inputH * origH,
+                    Xmax = (cx + bw / 2f) / inputW * origW,
+                    Ymax = (cy + bh / 2f) / inputH * origH,
                     Score = score
                 });
             }
 
-            results = NonMaxSuppression(results, iouThreshold: 0.45f);
+            results = NonMaxSuppression(results, 0.45f);
 
-            // Draw detections on a copy of the original
+            // ── Draw annotations ──────────────────────────────────────────
+            // Create annotated INDEPENDENTLY from origBmp
             var annotated = new Bitmap(origBmp);
+            origBmp.Dispose(); // safe to dispose now — annotated is a separate copy
+
             using (var g = Graphics.FromImage(annotated))
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 foreach (var r in results)
                 {
-                    using var boxPen = new Pen(Color.FromArgb(0, 210, 100), 2);
-                    g.DrawRectangle(boxPen,
-                        r.Xmin, r.Ymin,
+                    // Green bounding box
+                    using var boxPen = new Pen(Color.FromArgb(0, 220, 80), 2);
+                    g.DrawRectangle(boxPen, r.Xmin, r.Ymin,
                         r.Xmax - r.Xmin, r.Ymax - r.Ymin);
 
-                    // Centre dot
-                    g.FillEllipse(Brushes.Red, r.Xc - 5, r.Yc - 5, 10, 10);
+                    // Red dot at computed Xc, Yc using a/b values
+                    float xc = r.ComputeXc(a);
+                    float yc = r.ComputeYc(b);
+                    g.FillEllipse(Brushes.Red, xc - 6, yc - 6, 12, 12);
+                    g.DrawEllipse(Pens.White, xc - 6, yc - 6, 12, 12);
 
                     // Score label
-                    using var fnt = new Font("Segoe UI", 9f, FontStyle.Bold);
-                    using var bg  = new SolidBrush(Color.FromArgb(160, 0, 0, 0));
-                    var labelRect = new RectangleF(r.Xmin, r.Ymin - 18, 60, 18);
-                    g.FillRectangle(bg, labelRect);
-                    g.DrawString($"{r.Score:F2}", fnt, Brushes.Yellow, r.Xmin + 2, r.Ymin - 17);
+                    using var sf = new Font("Segoe UI", 9f, FontStyle.Bold);
+                    using var bg = new SolidBrush(Color.FromArgb(170, 0, 0, 0));
+                    g.FillRectangle(bg, new RectangleF(r.Xmin, r.Ymin - 20, 72, 20));
+                    g.DrawString($"{r.Score:F3}", sf, Brushes.Yellow, r.Xmin + 2, r.Ymin - 19);
+
+                    // Coordinate label
+                    using var cf = new Font("Segoe UI", 8f);
+                    g.DrawString($"({xc:F0},{yc:F0})", cf, Brushes.Cyan, xc + 9, yc - 9);
                 }
             }
 
-            // Crop around first detection
+            // ── Crop from annotated image (box + dot visible in crop) ─────
             Bitmap crop;
             if (results.Count > 0)
             {
-                var r0  = results[0];
-                int pad = 20;
-                int rx  = Math.Max(0, (int)r0.Xmin - pad);
-                int ry  = Math.Max(0, (int)r0.Ymin - pad);
-                int rw  = Math.Min(origW - rx, (int)(r0.Xmax - r0.Xmin) + pad * 2);
-                int rh  = Math.Min(origH - ry, (int)(r0.Ymax - r0.Ymin) + pad * 2);
-                crop = origBmp.Clone(new Rectangle(rx, ry, rw, rh), origBmp.PixelFormat);
+                var r0 = results[0];
+                int pad = 30;
+                int rx = Math.Max(0, (int)r0.Xmin - pad);
+                int ry = Math.Max(0, (int)r0.Ymin - pad);
+                int rw = Math.Min(annotated.Width - rx, (int)(r0.Xmax - r0.Xmin) + pad * 2);
+                int rh = Math.Min(annotated.Height - ry, (int)(r0.Ymax - r0.Ymin) + pad * 2);
+
+                // Clone a sub-region of the annotated image
+                crop = annotated.Clone(
+                    new Rectangle(rx, ry, rw, rh),
+                    annotated.PixelFormat);
             }
             else
             {
                 crop = new Bitmap(200, 200);
                 using var g = Graphics.FromImage(crop);
-                g.Clear(Color.FromArgb(200, 200, 200));
+                using var fnt = new Font("Segoe UI", 10f);
+                g.Clear(Color.FromArgb(50, 50, 50));
+                g.DrawString("No Detection", fnt, Brushes.Gray, 20, 85);
             }
 
             return (results, annotated, crop);
@@ -387,7 +518,7 @@ namespace OnnxDetectorApp
             List<DetectionResult> boxes, float iouThreshold)
         {
             var sorted = boxes.OrderByDescending(b => b.Score).ToList();
-            var kept   = new List<DetectionResult>();
+            var kept = new List<DetectionResult>();
             while (sorted.Count > 0)
             {
                 var best = sorted[0];
@@ -400,48 +531,57 @@ namespace OnnxDetectorApp
 
         private static float IoU(DetectionResult a, DetectionResult b)
         {
-            float ix    = Math.Max(0, Math.Min(a.Xmax, b.Xmax) - Math.Max(a.Xmin, b.Xmin));
-            float iy    = Math.Max(0, Math.Min(a.Ymax, b.Ymax) - Math.Max(a.Ymin, b.Ymin));
+            float ix = Math.Max(0, Math.Min(a.Xmax, b.Xmax) - Math.Max(a.Xmin, b.Xmin));
+            float iy = Math.Max(0, Math.Min(a.Ymax, b.Ymax) - Math.Max(a.Ymin, b.Ymin));
             float inter = ix * iy;
-            float aArea = (a.Xmax - a.Xmin) * (a.Ymax - a.Ymin);
-            float bArea = (b.Xmax - b.Xmin) * (b.Ymax - b.Ymin);
-            return inter / (aArea + bArea - inter + 1e-6f);
+            float aA = (a.Xmax - a.Xmin) * (a.Ymax - a.Ymin);
+            float bA = (b.Xmax - b.Xmin) * (b.Ymax - b.Ymin);
+            return inter / (aA + bA - inter + 1e-6f);
         }
 
         // ──────────────────────────────────────────────────────────────────
         // Helpers
         // ──────────────────────────────────────────────────────────────────
-        private void LoadImageToPanel()
+        private void LoadRawImageToPanel(string position, string imagePath)
         {
             try
             {
-                var bmp = new Bitmap(_imagePath);
-                if (_position == "Left")
+                var bmp = new Bitmap(imagePath);
+                if (position == "Left")
                 {
-                    picLeftFull.Image?.Dispose();
+                    ClearPictureBox(picLeftFull);
                     picLeftFull.Image = bmp;
                 }
                 else
                 {
-                    picRightFull.Image?.Dispose();
+                    ClearPictureBox(picRightFull);
                     picRightFull.Image = bmp;
                 }
             }
             catch { Warn("Could not load image."); }
         }
 
-        // Safely parse a/b — clamp to [0,1], default 0.5
+        // Accepts "0.5" or "0,5" — clamps [0,1] — defaults to 0.5
         private static float TryParseAB(string text)
         {
-            if (float.TryParse(text, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out float v))
-                return Math.Clamp(v, 0f, 1f);
-            return 0.5f;
+            text = (text ?? "0.5").Trim().Replace(',', '.');
+            return float.TryParse(text,
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out float v)
+                ? Math.Clamp(v, 0f, 1f)
+                : 0.5f;
+        }
+
+        private void SetButtonsEnabled(bool enabled)
+        {
+            btnRun.Enabled = enabled;
+            btnAiExec.Enabled = enabled;
         }
 
         private void SetStatus(string msg, Color color)
         {
-            lblStatus.Text      = msg;
+            lblStatus.Text = msg;
             lblStatus.ForeColor = color;
         }
 
@@ -456,12 +596,11 @@ namespace OnnxDetectorApp
     {
         public float Xmin, Ymin, Xmax, Ymax, Score;
 
-        // a=0.5 → centre X,  a=0 → left edge,  a=1 → right edge
-        // b=0.5 → centre Y,  b=0 → top edge,   b=1 → bottom edge
+        // a=0 → left edge   a=0.5 → centre   a=1 → right edge
+        // b=0 → top edge    b=0.5 → centre   b=1 → bottom edge
         public float ComputeXc(float a) => (1f - a) * Xmin + a * Xmax;
         public float ComputeYc(float b) => (1f - b) * Ymin + b * Ymax;
 
-        // Default centre (used for drawing the dot on the image)
         public float Xc => ComputeXc(0.5f);
         public float Yc => ComputeYc(0.5f);
     }
